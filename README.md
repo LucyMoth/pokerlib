@@ -24,7 +24,3 @@ hand := [2]pokerlib.Card{
 result := pokerlib.SimulateHand(hand, nil, 1, 10000)
 fmt.Printf("Equity: %.2f%%\n", result.Equity()*100)
 ```
-
-## License
-
-MIT
