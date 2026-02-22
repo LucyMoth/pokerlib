@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LucyMoth/pokerlib"
 )
@@ -29,7 +30,7 @@ func (c *CLI) cmdHelp(args []string) {
 
 	categories := map[string][]string{
 		"Game Setup": {"newgame", "addplayer", "modplayer", "removeplayer", "randplayers", "players", "strategies"},
-		"Simulation": {"run", "results", "details"},
+		"Simulation": {"run", "slowsim", "results", "details"},
 		"Session":    {"status", "clear", "help", "exit"},
 	}
 
@@ -295,6 +296,313 @@ func (c *CLI) cmdRun(args []string) {
 	fmt.Println()
 
 	c.printResultsSummary()
+}
+
+func (c *CLI) cmdSlowSim(args []string) {
+	if !c.session.CanRun() {
+		PrintError("Need at least 2 players to run simulation")
+		PrintInfo("Use 'addplayer' to add more players")
+		return
+	}
+
+	numHands := 5
+	if len(args) > 0 {
+		if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+			numHands = n
+		}
+	}
+
+	delay := time.Second
+
+	fmt.Println()
+	PrintHeader("Slow Simulation: %d hands (1s delay)", numHands)
+	fmt.Println()
+
+	if c.session.Table == nil {
+		c.session.InitializeTable()
+	}
+
+	for hand := 0; hand < numHands; hand++ {
+		if c.session.countActivePlayers() < 2 {
+			PrintWarning("Not enough players with chips to continue")
+			break
+		}
+
+		c.playSlowHand(hand+1, delay)
+		c.session.HandsPlayed++
+		c.session.Table.NextDealer()
+
+		if hand < numHands-1 {
+			PrintDivider()
+			time.Sleep(delay)
+		}
+	}
+
+	c.session.updateFinalStats()
+	fmt.Println()
+	PrintSuccess("Slow simulation complete!")
+	fmt.Println()
+	c.printResultsSummary()
+}
+
+func (c *CLI) playSlowHand(handNum int, delay time.Duration) {
+	table := c.session.Table
+
+	startingChips := make(map[string]int)
+	for _, p := range table.Players {
+		startingChips[p.Name] = p.Chips
+	}
+
+	table.Deck = pokerlib.NewDeck()
+	table.Deck.Shuffle()
+	table.Community = table.Community[:0]
+	table.Pot = 0
+	table.Street = pokerlib.Preflop
+	table.CurrentBet = 0
+	table.ActivePlayers = 0
+
+	for _, p := range table.Players {
+		p.ResetForNewHand()
+		if p.Status == pokerlib.Active {
+			table.ActivePlayers++
+		}
+	}
+
+	fmt.Printf("\n%s%s═══ HAND #%d ═══%s\n\n", Bold, Yellow, handNum, Reset)
+	time.Sleep(delay)
+
+	fmt.Printf("%s%sDealing hole cards...%s\n", Dim, Cyan, Reset)
+	time.Sleep(delay / 2)
+
+	for _, p := range table.Players {
+		if p.Status == pokerlib.Active || p.Status == pokerlib.AllIn {
+			cards := table.Deck.DealN(2)
+			p.ReceiveCards(cards)
+			card1 := ColorizeCard(pokerlib.CardToShortString(p.Hand[0]))
+			card2 := ColorizeCard(pokerlib.CardToShortString(p.Hand[1]))
+			stratName := "Human"
+			if p.Strategy != nil {
+				stratName = p.Strategy.Name()
+			}
+			fmt.Printf("  %s%-12s%s [%s] %s %s\n", Bold, p.Name, Reset, stratName, card1, card2)
+		}
+	}
+	fmt.Println()
+	time.Sleep(delay)
+
+	sbPos := (table.DealerPos + 1) % len(table.Players)
+	bbPos := (table.DealerPos + 2) % len(table.Players)
+	sbAmount := table.Players[sbPos].PlaceBet(table.SmallBlind)
+	bbAmount := table.Players[bbPos].PlaceBet(table.BigBlind)
+	table.Pot += sbAmount + bbAmount
+	table.CurrentBet = table.BigBlind
+
+	fmt.Printf("%s%sBlinds posted:%s SB %s%s%s (%d), BB %s%s%s (%d)\n",
+		Dim, White, Reset,
+		Cyan, table.Players[sbPos].Name, Reset, sbAmount,
+		Cyan, table.Players[bbPos].Name, Reset, bbAmount)
+	fmt.Printf("%s%sPot: %d%s\n\n", Bold, Green, table.Pot, Reset)
+	time.Sleep(delay)
+
+	for table.Street != pokerlib.Showdown && table.ActivePlayers > 1 {
+		c.playSlowBettingRound(delay)
+
+		if table.ActivePlayers > 1 {
+			prevStreet := table.Street
+			table.AdvanceStreet()
+			if table.Street == pokerlib.Flop && prevStreet == pokerlib.Preflop {
+				c.showCommunityCards("FLOP", delay)
+			} else if table.Street == pokerlib.Turn && prevStreet == pokerlib.Flop {
+				c.showCommunityCards("TURN", delay)
+			} else if table.Street == pokerlib.River && prevStreet == pokerlib.Turn {
+				c.showCommunityCards("RIVER", delay)
+			}
+		}
+	}
+
+	winners := table.DetermineWinners()
+
+	fmt.Printf("\n%s%s━━━ SHOWDOWN ━━━%s\n", Bold, Magenta, Reset)
+	time.Sleep(delay / 2)
+
+	if len(table.Community) == 5 {
+		fmt.Printf("%sBoard:%s ", Bold, Reset)
+		for _, card := range table.Community {
+			fmt.Printf("%s ", ColorizeCard(pokerlib.CardToShortString(card)))
+		}
+		fmt.Println()
+		time.Sleep(delay / 2)
+	}
+
+	fmt.Printf("%s%sPot: %d%s\n", Bold, Green, table.Pot, Reset)
+	time.Sleep(delay / 2)
+
+	if len(winners) > 0 {
+		winnerNames := make([]string, len(winners))
+		for i, w := range winners {
+			winnerNames[i] = w.Name
+			c.session.PlayerStats[w.Name].HandsWon++
+		}
+
+		if len(table.Community) == 5 {
+			allCards := winners[0].AllCards(table.Community)
+			result := pokerlib.EvaluateHand(allCards)
+			fmt.Printf("%s%s🏆 Winner: %s with %s%s\n",
+				Bold, BrightYellow,
+				strings.Join(winnerNames, ", "),
+				result.Rank.String(),
+				Reset)
+
+			for _, w := range winners {
+				c.session.PlayerStats[w.Name].ShowdownsWon++
+			}
+			for _, p := range table.Players {
+				if p.Status == pokerlib.Active || p.Status == pokerlib.AllIn {
+					c.session.PlayerStats[p.Name].ShowdownsSeen++
+				}
+			}
+		} else {
+			fmt.Printf("%s%s🏆 Winner: %s (others folded)%s\n",
+				Bold, BrightYellow,
+				strings.Join(winnerNames, ", "),
+				Reset)
+		}
+	}
+
+	table.AwardPot()
+	time.Sleep(delay / 2)
+
+	fmt.Printf("\n%sChip changes:%s\n", Dim, Reset)
+	for _, p := range table.Players {
+		change := p.Chips - startingChips[p.Name]
+		c.session.PlayerStats[p.Name].HandsPlayed++
+
+		changeStr := ColorizeNumber(change, true)
+		fmt.Printf("  %-12s %s → %s%d%s chips\n", p.Name, changeStr, Bold, p.Chips, Reset)
+
+		stats := c.session.PlayerStats[p.Name]
+		if change > 0 {
+			stats.TotalWinnings += change
+			if change > stats.BiggestWin {
+				stats.BiggestWin = change
+			}
+		} else if change < 0 {
+			stats.TotalLosses += (-change)
+			if (-change) > stats.BiggestLoss {
+				stats.BiggestLoss = -change
+			}
+		}
+	}
+	fmt.Println()
+}
+
+func (c *CLI) showCommunityCards(street string, delay time.Duration) {
+	fmt.Printf("\n%s%s━━━ %s ━━━%s\n", Bold, Cyan, street, Reset)
+	fmt.Printf("%sBoard:%s ", Bold, Reset)
+	for _, card := range c.session.Table.Community {
+		fmt.Printf("%s ", ColorizeCard(pokerlib.CardToShortString(card)))
+	}
+	fmt.Printf("%s%s(Pot: %d)%s\n\n", Dim, White, c.session.Table.Pot, Reset)
+	time.Sleep(delay)
+}
+
+func (c *CLI) playSlowBettingRound(delay time.Duration) {
+	table := c.session.Table
+	if table.ActivePlayers <= 1 {
+		return
+	}
+
+	numPlayers := len(table.Players)
+	startIdx := (table.DealerPos + 1) % numPlayers
+	if table.Street == pokerlib.Preflop {
+		startIdx = (table.DealerPos + 3) % numPlayers
+	}
+
+	lastAggressor := -1
+	actionsThisRound := 0
+	maxActions := numPlayers * 4
+
+	currentIdx := startIdx
+	canAct := c.session.countCanActPlayers()
+	playersToAct := canAct
+
+	for playersToAct > 0 && actionsThisRound < maxActions {
+		player := table.Players[currentIdx]
+
+		if player.Status == pokerlib.Active {
+			if table.ActivePlayers <= 1 {
+				return
+			}
+
+			needsToAct := player.Bet < table.CurrentBet || actionsThisRound < table.ActivePlayers
+
+			if lastAggressor == currentIdx {
+				break
+			}
+
+			if needsToAct || lastAggressor == -1 {
+				ctx := pokerlib.BuildGameContext(player, table, currentIdx)
+				decision := player.MakeDecision(ctx)
+
+				actionColor := White
+				switch decision.Action {
+				case pokerlib.Fold:
+					actionColor = Red
+				case pokerlib.Call, pokerlib.Check:
+					actionColor = Yellow
+				case pokerlib.Raise, pokerlib.AllInAction:
+					actionColor = Green
+				}
+
+				amountStr := ""
+				if decision.Amount > 0 {
+					amountStr = fmt.Sprintf(" %d", decision.Amount)
+				}
+				fmt.Printf("  %s%-12s%s %s%s%s%s\n",
+					Cyan, player.Name, Reset,
+					Bold, actionColor, decision.Action.String(), Reset)
+				if amountStr != "" {
+					fmt.Printf("    %s→ %d chips%s\n", Dim, decision.Amount, Reset)
+				}
+				time.Sleep(delay)
+
+				prevBet := table.CurrentBet
+				table.ProcessAction(player, decision.Action, decision.Amount)
+				actionsThisRound++
+
+				canAct = c.session.countCanActPlayers()
+				isRaise := (decision.Action == pokerlib.Raise || decision.Action == pokerlib.AllInAction) && table.CurrentBet > prevBet
+				if isRaise {
+					lastAggressor = currentIdx
+					playersToAct = canAct
+					if playersToAct > 1 {
+						playersToAct--
+					}
+				} else {
+					playersToAct--
+				}
+
+				if decision.Action == pokerlib.Fold {
+					stats := c.session.PlayerStats[player.Name]
+					if table.Street == pokerlib.Preflop {
+						stats.FoldsPreflop++
+					} else {
+						stats.FoldsPostflop++
+					}
+				}
+
+				if canAct <= 1 {
+					return
+				}
+			}
+		}
+
+		currentIdx = (currentIdx + 1) % numPlayers
+
+		if currentIdx == startIdx && lastAggressor == -1 {
+			break
+		}
+	}
 }
 
 func (c *CLI) cmdResults(args []string) {

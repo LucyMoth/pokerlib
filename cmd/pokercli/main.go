@@ -112,6 +112,12 @@ func (c *CLI) registerCommands() {
 		Usage:       "run <count>",
 		Handler:     c.cmdRun,
 	}
+	c.commands["slowsim"] = Command{
+		Name:        "slowsim",
+		Description: "Simulate hands with step-by-step output",
+		Usage:       "slowsim <count>",
+		Handler:     c.cmdSlowSim,
+	}
 	c.commands["results"] = Command{
 		Name:        "results",
 		Description: "Show simulation results",
