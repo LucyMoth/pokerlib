@@ -316,57 +316,69 @@ func (s *Session) playBettingRound(record *HandRecord) {
 		startIdx = (s.Table.DealerPos + 3) % numPlayers
 	}
 
-	lastAggressor := -1
+	// Track which players have acted since the last raise (or start of round)
+	actedSinceLastRaise := make([]bool, numPlayers)
 	actionsThisRound := 0
 	maxActions := numPlayers * 4
 
 	currentIdx := startIdx
-	canAct := s.countCanActPlayers()
-	playersToAct := canAct
 
-	for playersToAct > 0 && actionsThisRound < maxActions {
+	for actionsThisRound < maxActions {
 		player := s.Table.Players[currentIdx]
 
+		canAct := s.countCanActPlayers()
+		if canAct <= 1 || s.Table.ActivePlayers <= 1 {
+			return
+		}
+
 		if player.Status == pokerlib.Active {
-			canAct = s.countCanActPlayers()
-			if canAct <= 1 {
-				return
-			}
+			// Player needs to act if:
+			// 1. Their bet is less than the current bet, OR
+			// 2. They haven't acted since the last raise (or start of round)
+			needsToAct := player.Bet < s.Table.CurrentBet || !actedSinceLastRaise[currentIdx]
 
-			needsToAct := player.Bet < s.Table.CurrentBet || actionsThisRound < canAct
-
-			if lastAggressor == currentIdx {
-				break
-			}
-
-			if needsToAct || lastAggressor == -1 {
+			if needsToAct {
 				ctx := pokerlib.BuildGameContext(player, s.Table, currentIdx)
 				decision := player.MakeDecision(ctx)
+
+				prevBet := s.Table.CurrentBet
+
+				action := decision.Action
+				amount := decision.Amount
+				if !s.Table.ProcessAction(player, action, amount) {
+					// Action was rejected, use fallback
+					if s.Table.CurrentBet > player.Bet {
+						action = pokerlib.Call
+						amount = 0
+						s.Table.ProcessAction(player, action, amount)
+					} else {
+						action = pokerlib.Check
+						amount = 0
+						s.Table.ProcessAction(player, action, amount)
+					}
+				}
 
 				record.Actions = append(record.Actions, ActionRecord{
 					Street: s.Table.Street,
 					Player: player.Name,
-					Action: decision.Action,
-					Amount: decision.Amount,
+					Action: action,
+					Amount: amount,
 				})
 
-				prevBet := s.Table.CurrentBet
-				s.Table.ProcessAction(player, decision.Action, decision.Amount)
 				actionsThisRound++
+				actedSinceLastRaise[currentIdx] = true
 
-				canAct = s.countCanActPlayers()
-				isRaise := (decision.Action == pokerlib.Raise || decision.Action == pokerlib.AllInAction) && s.Table.CurrentBet > prevBet
+				isRaise := (action == pokerlib.Raise || action == pokerlib.AllInAction) && s.Table.CurrentBet > prevBet
 				if isRaise {
-					lastAggressor = currentIdx
-					playersToAct = canAct
-					if playersToAct > 1 {
-						playersToAct--
+					// Reset acted flags for all other players
+					for i := range actedSinceLastRaise {
+						if i != currentIdx {
+							actedSinceLastRaise[i] = false
+						}
 					}
-				} else {
-					playersToAct--
 				}
 
-				if decision.Action == pokerlib.Fold {
+				if action == pokerlib.Fold {
 					stats := s.PlayerStats[player.Name]
 					if s.Table.Street == pokerlib.Preflop {
 						stats.FoldsPreflop++
@@ -375,6 +387,7 @@ func (s *Session) playBettingRound(record *HandRecord) {
 					}
 				}
 
+				canAct = s.countCanActPlayers()
 				if canAct <= 1 {
 					return
 				}
@@ -383,7 +396,20 @@ func (s *Session) playBettingRound(record *HandRecord) {
 
 		currentIdx = (currentIdx + 1) % numPlayers
 
-		if currentIdx == startIdx && lastAggressor == -1 {
+		// Check if betting round is complete:
+		// All active players have acted and matched the current bet
+		// (or have folded)
+		// TODO: update strategies for 3-bet pots, etc. to handle this better
+		allActed := true
+		for i, p := range s.Table.Players {
+			if p.Status == pokerlib.Active {
+				if !actedSinceLastRaise[i] || p.Bet < s.Table.CurrentBet {
+					allActed = false
+					break
+				}
+			}
+		}
+		if allActed {
 			break
 		}
 	}
