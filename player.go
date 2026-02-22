@@ -10,11 +10,13 @@ const (
 )
 
 type Player struct {
-	Name   string
-	Hand   [2]Card
-	Chips  int
-	Bet    int
-	Status PlayerStatus
+	Name     string
+	Hand     [2]Card
+	Chips    int
+	Bet      int
+	Status   PlayerStatus
+	IsAI     bool
+	Strategy Strategy
 }
 
 func NewPlayer(name string, chips int) *Player {
@@ -22,6 +24,16 @@ func NewPlayer(name string, chips int) *Player {
 		Name:   name,
 		Chips:  chips,
 		Status: Active,
+	}
+}
+
+func NewAIPlayer(name string, chips int, strategy Strategy) *Player {
+	return &Player{
+		Name:     name,
+		Chips:    chips,
+		Status:   Active,
+		IsAI:     true,
+		Strategy: strategy,
 	}
 }
 
@@ -72,4 +84,15 @@ func (p *Player) AllCards(community []Card) []Card {
 	cards = append(cards, p.Hand[:]...)
 	cards = append(cards, community...)
 	return cards
+}
+
+func (p *Player) MakeDecision(ctx GameContext) Decision {
+	if p.Strategy == nil {
+		return Decision{Action: Check}
+	}
+	return p.Strategy.Decide(ctx)
+}
+
+func (p *Player) SetStrategy(strategy Strategy) {
+	p.Strategy = strategy
 }
