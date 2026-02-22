@@ -79,8 +79,23 @@ func (t *Table) DealHoleCards() {
 }
 
 func (t *Table) PostBlinds() {
-	sbPos := (t.DealerPos + 1) % len(t.Players)
-	bbPos := (t.DealerPos + 2) % len(t.Players)
+	numPlayers := len(t.Players)
+
+	sbPos := (t.DealerPos + 1) % numPlayers
+	for t.Players[sbPos].Status != Active && t.Players[sbPos].Status != AllIn {
+		sbPos = (sbPos + 1) % numPlayers
+		if sbPos == t.DealerPos {
+			return
+		}
+	}
+
+	bbPos := (sbPos + 1) % numPlayers
+	for t.Players[bbPos].Status != Active && t.Players[bbPos].Status != AllIn {
+		bbPos = (bbPos + 1) % numPlayers
+		if bbPos == sbPos {
+			return
+		}
+	}
 
 	sbAmount := t.Players[sbPos].PlaceBet(t.SmallBlind)
 	bbAmount := t.Players[bbPos].PlaceBet(t.BigBlind)
@@ -223,7 +238,15 @@ func (t *Table) AwardPot() {
 }
 
 func (t *Table) NextDealer() {
-	t.DealerPos = (t.DealerPos + 1) % len(t.Players)
+	numPlayers := len(t.Players)
+	start := t.DealerPos
+	t.DealerPos = (t.DealerPos + 1) % numPlayers
+	for t.Players[t.DealerPos].Chips == 0 {
+		t.DealerPos = (t.DealerPos + 1) % numPlayers
+		if t.DealerPos == start {
+			break
+		}
+	}
 }
 
 func (t *Table) GetActivePlayers() []*Player {
