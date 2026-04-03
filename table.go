@@ -237,23 +237,119 @@ func (t *Table) DetermineWinners() []*Player {
 }
 
 func (t *Table) AwardPot() {
-	winners := t.DetermineWinners()
-	if len(winners) == 0 {
+	// Build side pots based on all-in amounts
+	type sidePot struct {
+		amount   int
+		eligible []*Player
+	}
+
+	var contenders []*Player
+	for _, p := range t.Players {
+		if p.Status == Active || p.Status == AllIn {
+			contenders = append(contenders, p)
+		}
+	}
+
+	if len(contenders) == 0 {
+		t.Pot = 0
 		return
 	}
 
-	share := t.Pot / len(winners)
-	remainder := t.Pot % len(winners)
+	if len(contenders) == 1 {
+		contenders[0].Award(t.Pot)
+		t.Pot = 0
+		return
+	}
 
-	for i, w := range winners {
-		award := share
-		if i < remainder {
-			award++
+	// Collect all distinct bet levels from all-in players
+	betLevels := make(map[int]bool)
+	for _, p := range t.Players {
+		if p.TotalBet > 0 {
+			betLevels[p.TotalBet] = true
 		}
-		w.Award(award)
+	}
+	sorted := make([]int, 0, len(betLevels))
+	for b := range betLevels {
+		sorted = append(sorted, b)
+	}
+	sortInts(sorted)
+
+	var pots []sidePot
+	prevLevel := 0
+	for _, level := range sorted {
+		pot := sidePot{}
+		perPlayer := level - prevLevel
+		if perPlayer <= 0 {
+			continue
+		}
+		for _, p := range t.Players {
+			contribution := p.TotalBet - prevLevel
+			if contribution > perPlayer {
+				contribution = perPlayer
+			}
+			if contribution > 0 {
+				pot.amount += contribution
+			}
+			if (p.Status == Active || p.Status == AllIn) && p.TotalBet >= level {
+				pot.eligible = append(pot.eligible, p)
+			}
+		}
+		if pot.amount > 0 {
+			pots = append(pots, pot)
+		}
+		prevLevel = level
+	}
+
+	// Award each side pot
+	for _, pot := range pots {
+		if len(pot.eligible) == 0 {
+			continue
+		}
+
+		var bestHand HandResult
+		var winners []*Player
+		first := true
+
+		for _, p := range pot.eligible {
+			allCards := p.AllCards(t.Community)
+			hand := EvaluateHand(allCards)
+
+			if first {
+				bestHand = hand
+				winners = []*Player{p}
+				first = false
+			} else {
+				cmp := hand.Compare(bestHand)
+				if cmp > 0 {
+					bestHand = hand
+					winners = []*Player{p}
+				} else if cmp == 0 {
+					winners = append(winners, p)
+				}
+			}
+		}
+
+		share := pot.amount / len(winners)
+		remainder := pot.amount % len(winners)
+
+		for i, w := range winners {
+			award := share
+			if i < remainder {
+				award++
+			}
+			w.Award(award)
+		}
 	}
 
 	t.Pot = 0
+}
+
+func sortInts(a []int) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j] < a[j-1]; j-- {
+			a[j], a[j-1] = a[j-1], a[j]
+		}
+	}
 }
 
 func (t *Table) NextDealer() {

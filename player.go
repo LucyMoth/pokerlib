@@ -14,6 +14,7 @@ type Player struct {
 	Hand     [2]Card
 	Chips    int
 	Bet      int
+	TotalBet int
 	Status   PlayerStatus
 	IsAI     bool
 	Strategy Strategy
@@ -52,12 +53,14 @@ func (p *Player) PlaceBet(amount int) int {
 	if amount >= p.Chips {
 		bet := p.Chips
 		p.Bet += bet
+		p.TotalBet += bet
 		p.Chips = 0
 		p.Status = AllIn
 		return bet
 	}
 	p.Chips -= amount
 	p.Bet += amount
+	p.TotalBet += amount
 	return amount
 }
 
@@ -68,6 +71,7 @@ func (p *Player) Fold() {
 func (p *Player) ResetForNewHand() {
 	p.ClearHand()
 	p.Bet = 0
+	p.TotalBet = 0
 	if p.Chips > 0 {
 		p.Status = Active
 	} else {
