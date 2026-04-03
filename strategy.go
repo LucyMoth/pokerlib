@@ -617,12 +617,14 @@ func (s *FishStrategy) decidePostflop(ctx GameContext) Decision {
 	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
+	draws := AnalyzeDraws(ctx.Hand, ctx.Community)
 
 	hasPair := result.Rank >= OnePair
 	hasStrongHand := result.Rank >= TwoPair
 
 	if toCall == 0 {
 		if hasStrongHand {
+			// Fish min-bet or half-pot randomly
 			if s.rng.Float64() < 0.4 {
 				return Decision{Action: Raise, Amount: ctx.BigBlind}
 			}
@@ -651,8 +653,16 @@ func (s *FishStrategy) decidePostflop(ctx GameContext) Decision {
 		return Decision{Action: Fold}
 	}
 
-	if s.chaseDraws && s.hasDrawingHand(ctx) {
+	// Fish chase draws regardless of pot odds
+	if s.chaseDraws && draws.HasDraw() {
 		return Decision{Action: Call}
+	}
+
+	// Fish also chase backdoor draws and overcards
+	if s.chaseDraws && s.hasOvercards(ctx) {
+		if s.rng.Float64() < 0.5 {
+			return Decision{Action: Call}
+		}
 	}
 
 	if s.rng.Float64() < s.callFreq*0.4 {
@@ -662,42 +672,17 @@ func (s *FishStrategy) decidePostflop(ctx GameContext) Decision {
 	return Decision{Action: Fold}
 }
 
-func (s *FishStrategy) hasDrawingHand(ctx GameContext) bool {
-	allCards := make([]Card, 0, 2+len(ctx.Community))
-	allCards = append(allCards, ctx.Hand[:]...)
-	allCards = append(allCards, ctx.Community...)
-
-	suitCounts := make(map[Suit]int)
-	for _, c := range allCards {
-		suitCounts[c.Suit]++
+func (s *FishStrategy) hasOvercards(ctx GameContext) bool {
+	if len(ctx.Community) == 0 {
+		return false
 	}
-	for _, count := range suitCounts {
-		if count >= 4 {
-			return true
+	maxBoard := Rank(0)
+	for _, c := range ctx.Community {
+		if c.Rank > maxBoard {
+			maxBoard = c.Rank
 		}
 	}
-
-	ranks := make([]int, len(allCards))
-	for i, c := range allCards {
-		ranks[i] = int(c.Rank)
-	}
-	for i := 0; i < len(ranks); i++ {
-		consecutive := 1
-		for j := i + 1; j < len(ranks); j++ {
-			diff := ranks[j] - ranks[i]
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff <= 4 {
-				consecutive++
-			}
-		}
-		if consecutive >= 4 {
-			return true
-		}
-	}
-
-	return false
+	return ctx.Hand[0].Rank > maxBoard || ctx.Hand[1].Rank > maxBoard
 }
 
 type TAGStrategy struct {
@@ -788,6 +773,7 @@ func (s *TAGStrategy) decidePostflop(ctx GameContext) Decision {
 	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
+	draws := AnalyzeDraws(ctx.Hand, ctx.Community)
 
 	if toCall == 0 {
 		if result.Rank >= TwoPair {
@@ -797,6 +783,19 @@ func (s *TAGStrategy) decidePostflop(ctx GameContext) Decision {
 		if result.Rank >= OnePair {
 			if s.rng.Float64() < s.aggression*0.7 {
 				return Decision{Action: Raise, Amount: ctx.Pot / 2}
+			}
+			return Decision{Action: Check}
+		}
+		// Semi-bluff with draws
+		if draws.HasDraw() && draws.Outs >= 8 {
+			if s.rng.Float64() < s.aggression*0.6 {
+				return Decision{Action: Raise, Amount: ctx.Pot / 2}
+			}
+		}
+		// C-bet bluff on dry boards
+		if ctx.Street == Flop && ctx.PlayersInHand <= 3 {
+			if s.rng.Float64() < s.aggression*0.4 {
+				return Decision{Action: Raise, Amount: ctx.Pot / 3}
 			}
 		}
 		return Decision{Action: Check}
@@ -811,6 +810,15 @@ func (s *TAGStrategy) decidePostflop(ctx GameContext) Decision {
 
 	if result.Rank >= OnePair {
 		if ctx.PotOdds() < 0.35 {
+			return Decision{Action: Call}
+		}
+		return Decision{Action: Fold}
+	}
+
+	// Call with good draws if pot odds warrant it
+	if draws.HasDraw() {
+		equity := draws.DrawEquity()
+		if equity > ctx.PotOdds()*0.8 {
 			return Decision{Action: Call}
 		}
 	}
@@ -876,11 +884,36 @@ func (s *LAGStrategy) decidePostflop(ctx GameContext) Decision {
 	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
+	draws := AnalyzeDraws(ctx.Hand, ctx.Community)
 
 	if toCall == 0 {
-		if result.Rank >= OnePair || s.rng.Float64() < s.aggression*0.6 {
+		// Bet strong hands
+		if result.Rank >= TwoPair {
+			betSize := ctx.Pot*2/3 + ctx.Pot/4
+			return Decision{Action: Raise, Amount: betSize}
+		}
+		// Bet pairs aggressively
+		if result.Rank >= OnePair {
 			betSize := ctx.Pot/2 + ctx.Pot/4
 			return Decision{Action: Raise, Amount: betSize}
+		}
+		// Semi-bluff with any draw
+		if draws.HasDraw() {
+			if s.rng.Float64() < s.aggression*0.7 {
+				return Decision{Action: Raise, Amount: ctx.Pot * 2 / 3}
+			}
+			return Decision{Action: Check}
+		}
+		// Bluff frequently, especially in position
+		bluffFreq := s.aggression * 0.5
+		if ctx.Position == LatePosition {
+			bluffFreq += 0.15
+		}
+		if ctx.PlayersInHand <= 2 {
+			bluffFreq += 0.10
+		}
+		if s.rng.Float64() < bluffFreq {
+			return Decision{Action: Raise, Amount: ctx.Pot / 2}
 		}
 		return Decision{Action: Check}
 	}
@@ -893,14 +926,23 @@ func (s *LAGStrategy) decidePostflop(ctx GameContext) Decision {
 	}
 
 	if result.Rank >= OnePair {
+		// Float with pairs, occasionally raise
+		if s.rng.Float64() < s.aggression*0.3 {
+			return Decision{Action: Raise, Amount: toCall * 2}
+		}
 		return Decision{Action: Call}
 	}
 
-	if s.rng.Float64() < s.aggression*0.3 {
-		return Decision{Action: Raise, Amount: toCall * 2}
+	// Call or raise with draws
+	if draws.HasDraw() {
+		if draws.Outs >= 8 && s.rng.Float64() < s.aggression*0.5 {
+			return Decision{Action: Raise, Amount: toCall * 2}
+		}
+		return Decision{Action: Call}
 	}
 
-	if ctx.PotOdds() < 0.25 {
+	// Float bluff
+	if ctx.PlayersInHand <= 2 && s.rng.Float64() < s.aggression*0.25 {
 		return Decision{Action: Call}
 	}
 
@@ -958,11 +1000,42 @@ func (s *NitStrategy) decidePostflop(ctx GameContext) Decision {
 		if result.Rank >= ThreeOfAKind {
 			return Decision{Action: Raise, Amount: ctx.Pot * 2 / 3}
 		}
+		if result.Rank >= TwoPair {
+			if s.rng.Float64() < 0.6 {
+				return Decision{Action: Raise, Amount: ctx.Pot / 2}
+			}
+			return Decision{Action: Check}
+		}
+		// Bet overpairs occasionally
+		if result.Rank == OnePair && len(result.HighCards) > 0 {
+			maxBoard := Rank(0)
+			for _, c := range ctx.Community {
+				if c.Rank > maxBoard {
+					maxBoard = c.Rank
+				}
+			}
+			if result.HighCards[0] > maxBoard && s.rng.Float64() < 0.4 {
+				return Decision{Action: Raise, Amount: ctx.Pot / 2}
+			}
+		}
 		return Decision{Action: Check}
+	}
+
+	if result.Rank >= ThreeOfAKind {
+		if s.rng.Float64() < 0.5 {
+			return Decision{Action: Raise, Amount: toCall * 2}
+		}
+		return Decision{Action: Call}
 	}
 
 	if result.Rank >= TwoPair {
 		return Decision{Action: Call}
+	}
+
+	if result.Rank == OnePair && len(result.HighCards) > 0 && result.HighCards[0] >= Queen {
+		if ctx.PotOdds() < 0.25 {
+			return Decision{Action: Call}
+		}
 	}
 
 	return Decision{Action: Fold}
