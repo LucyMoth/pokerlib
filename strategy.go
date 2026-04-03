@@ -2,6 +2,7 @@ package pokerlib
 
 import (
 	"math/rand"
+	"sort"
 )
 
 type Position int
@@ -286,28 +287,58 @@ func (s *GTOStrategy) decidePostflop(ctx GameContext) Decision {
 	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
+	draws := AnalyzeDraws(ctx.Hand, ctx.Community)
 
-	handValue := s.assessHandValue(result, ctx)
+	handValue := s.assessHandValue(result, ctx, draws)
 	isHeadsUp := ctx.PlayersInHand <= 2
 
 	if toCall == 0 {
 		switch {
-		case handValue >= 0.8:
+		case handValue >= 0.85:
+			// Slow-play some monsters
+			if s.rng.Float64() < 0.2 {
+				return Decision{Action: Check}
+			}
 			betSize := ctx.Pot * 3 / 4
 			return Decision{Action: Raise, Amount: betSize}
-		case handValue >= 0.5:
+		case handValue >= 0.6:
 			betSize := ctx.Pot * 2 / 3
-			if s.rng.Float64() < 0.8 {
+			if s.rng.Float64() < 0.85 {
 				return Decision{Action: Raise, Amount: betSize}
 			}
 			return Decision{Action: Check}
-		case handValue >= 0.3:
-			if s.rng.Float64() < 0.6 || isHeadsUp {
+		case handValue >= 0.35:
+			freq := 0.55
+			if isHeadsUp {
+				freq = 0.7
+			}
+			if s.rng.Float64() < freq {
+				return Decision{Action: Raise, Amount: ctx.Pot / 2}
+			}
+			return Decision{Action: Check}
+		case draws.HasDraw():
+			// Semi-bluff with draws
+			freq := 0.45
+			if draws.OpenEndedStraight || draws.FlushDraw {
+				freq = 0.55
+			}
+			if isHeadsUp {
+				freq += 0.15
+			}
+			if s.rng.Float64() < freq {
 				return Decision{Action: Raise, Amount: ctx.Pot / 2}
 			}
 			return Decision{Action: Check}
 		default:
-			if isHeadsUp && s.rng.Float64() < 0.35 {
+			// Pure bluff frequency
+			bluffFreq := 0.15
+			if isHeadsUp {
+				bluffFreq = 0.30
+			}
+			if ctx.Position == LatePosition {
+				bluffFreq += 0.10
+			}
+			if s.rng.Float64() < bluffFreq {
 				return Decision{Action: Raise, Amount: ctx.Pot / 3}
 			}
 			return Decision{Action: Check}
@@ -315,47 +346,202 @@ func (s *GTOStrategy) decidePostflop(ctx GameContext) Decision {
 	}
 
 	potOdds := ctx.PotOdds()
-	if handValue > potOdds {
-		if handValue >= 0.7 && s.rng.Float64() < 0.5 {
+	effectiveValue := handValue
+	if draws.HasDraw() {
+		effectiveValue += draws.DrawEquity()
+		if effectiveValue > 1.0 {
+			effectiveValue = 1.0
+		}
+	}
+
+	if effectiveValue > potOdds {
+		if handValue >= 0.7 && s.rng.Float64() < 0.45 {
 			return Decision{Action: Raise, Amount: toCall*2 + ctx.Pot/2}
+		}
+		if handValue >= 0.5 && s.rng.Float64() < 0.25 {
+			return Decision{Action: Raise, Amount: toCall * 2}
 		}
 		return Decision{Action: Call}
 	}
 
-	if handValue > potOdds*0.7 && s.rng.Float64() < 0.3 {
+	// Semi-bluff raise with strong draws
+	if draws.HasDraw() && draws.Outs >= 8 && s.rng.Float64() < 0.3 {
+		return Decision{Action: Raise, Amount: toCall * 2}
+	}
+
+	if effectiveValue > potOdds*0.7 && s.rng.Float64() < 0.25 {
 		return Decision{Action: Call}
 	}
 
 	return Decision{Action: Fold}
 }
 
-func (s *GTOStrategy) assessHandValue(result HandResult, ctx GameContext) float64 {
+func (s *GTOStrategy) assessHandValue(result HandResult, ctx GameContext, draws DrawInfo) float64 {
+	baseValue := 0.0
 	switch result.Rank {
 	case RoyalFlush, StraightFlush:
 		return 1.0
 	case FourOfAKind:
-		return 0.95
+		return 0.97
 	case FullHouse:
-		return 0.85
+		baseValue = 0.90
 	case Flush:
-		return 0.75
-	case Straight:
-		return 0.70
-	case ThreeOfAKind:
-		return 0.60
-	case TwoPair:
-		return 0.50
-	case OnePair:
-		if len(result.HighCards) > 0 && result.HighCards[0] >= Ten {
-			return 0.35
+		baseValue = 0.80
+		if len(result.HighCards) > 0 && result.HighCards[0] >= Queen {
+			baseValue = 0.85
 		}
-		return 0.25
+	case Straight:
+		baseValue = 0.72
+	case ThreeOfAKind:
+		baseValue = 0.62
+		if s.isSetOnBoard(result, ctx) {
+			baseValue = 0.55
+		}
+	case TwoPair:
+		baseValue = 0.48
+		if s.isTopTwoPair(result, ctx) {
+			baseValue = 0.55
+		}
+	case OnePair:
+		baseValue = s.assessPairValue(result, ctx)
 	default:
 		if len(result.HighCards) > 0 && result.HighCards[0] >= Queen {
-			return 0.15
+			baseValue = 0.12
+		} else {
+			baseValue = 0.05
 		}
-		return 0.05
 	}
+
+	// Adjust for board texture
+	if len(ctx.Community) >= 3 {
+		paired := s.boardPaired(ctx.Community)
+		monotone := s.boardMonotone(ctx.Community)
+		connected := s.boardConnected(ctx.Community)
+
+		if paired && result.Rank <= OnePair {
+			baseValue *= 0.85
+		}
+		if monotone && result.Rank < Flush {
+			baseValue *= 0.80
+		}
+		if connected && result.Rank < Straight {
+			baseValue *= 0.90
+		}
+	}
+
+	// Adjust for number of opponents
+	if ctx.PlayersInHand > 2 && result.Rank <= OnePair {
+		baseValue *= 0.85
+	}
+	if ctx.PlayersInHand > 3 && result.Rank <= TwoPair {
+		baseValue *= 0.90
+	}
+
+	return baseValue
+}
+
+func (s *GTOStrategy) assessPairValue(result HandResult, ctx GameContext) float64 {
+	if len(result.HighCards) == 0 || len(ctx.Community) == 0 {
+		return 0.25
+	}
+	pairRank := result.HighCards[0]
+
+	// Check if it's an overpair (both hole cards form pair above board)
+	maxBoard := Rank(0)
+	for _, c := range ctx.Community {
+		if c.Rank > maxBoard {
+			maxBoard = c.Rank
+		}
+	}
+
+	if pairRank > maxBoard {
+		// Overpair
+		if pairRank >= Queen {
+			return 0.45
+		}
+		return 0.38
+	}
+
+	// Top pair
+	if pairRank == maxBoard {
+		if len(result.HighCards) > 1 && result.HighCards[1] >= Ten {
+			return 0.35
+		}
+		return 0.28
+	}
+
+	// Middle/bottom pair
+	return 0.18
+}
+
+func (s *GTOStrategy) isSetOnBoard(result HandResult, ctx GameContext) bool {
+	if result.Rank != ThreeOfAKind || len(result.HighCards) == 0 {
+		return false
+	}
+	tripRank := result.HighCards[0]
+	count := 0
+	for _, c := range ctx.Community {
+		if c.Rank == tripRank {
+			count++
+		}
+	}
+	return count >= 2
+}
+
+func (s *GTOStrategy) isTopTwoPair(result HandResult, ctx GameContext) bool {
+	if result.Rank != TwoPair || len(result.HighCards) < 2 {
+		return false
+	}
+	maxBoard := Rank(0)
+	for _, c := range ctx.Community {
+		if c.Rank > maxBoard {
+			maxBoard = c.Rank
+		}
+	}
+	return result.HighCards[0] >= maxBoard
+}
+
+func (s *GTOStrategy) boardPaired(community []Card) bool {
+	seen := make(map[Rank]bool)
+	for _, c := range community {
+		if seen[c.Rank] {
+			return true
+		}
+		seen[c.Rank] = true
+	}
+	return false
+}
+
+func (s *GTOStrategy) boardMonotone(community []Card) bool {
+	if len(community) < 3 {
+		return false
+	}
+	suit := community[0].Suit
+	count := 0
+	for _, c := range community {
+		if c.Suit == suit {
+			count++
+		}
+	}
+	return count >= 3
+}
+
+func (s *GTOStrategy) boardConnected(community []Card) bool {
+	if len(community) < 3 {
+		return false
+	}
+	ranks := make([]int, len(community))
+	for i, c := range community {
+		ranks[i] = int(c.Rank)
+	}
+	sort.Ints(ranks)
+	connCount := 0
+	for i := 1; i < len(ranks); i++ {
+		if ranks[i]-ranks[i-1] <= 2 {
+			connCount++
+		}
+	}
+	return connCount >= 2
 }
 
 type FishStrategy struct {
