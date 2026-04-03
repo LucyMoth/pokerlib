@@ -1068,15 +1068,16 @@ func GetPosition(playerIndex, dealerPos, numPlayers int) Position {
 
 func BuildGameContext(player *Player, table *Table, playerIndex int) GameContext {
 	return GameContext{
-		Hand:          player.Hand,
-		Community:     table.Community,
-		Street:        table.Street,
-		Pot:           table.Pot,
-		CurrentBet:    table.CurrentBet,
-		PlayerBet:     player.Bet,
-		PlayerChips:   player.Chips,
-		Position:      GetPosition(playerIndex, table.DealerPos, len(table.Players)),
-		PlayersInHand: table.ActivePlayers,
-		BigBlind:      table.BigBlind,
+		Hand:            player.Hand,
+		Community:       table.Community,
+		Street:          table.Street,
+		Pot:             table.Pot,
+		CurrentBet:      table.CurrentBet,
+		PlayerBet:       player.Bet,
+		PlayerChips:     player.Chips,
+		Position:        GetPosition(playerIndex, table.DealerPos, len(table.Players)),
+		PlayersInHand:   table.ActivePlayers,
+		RaisesThisRound: table.RaisesThisStreet,
+		BigBlind:        table.BigBlind,
 	}
 }

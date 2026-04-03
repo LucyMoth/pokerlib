@@ -22,9 +22,11 @@ type Table struct {
 	Street        Street
 	DealerPos     int
 	CurrentBet    int
+	LastRaise     int
 	SmallBlind    int
 	BigBlind      int
 	ActivePlayers int
+	RaisesThisStreet int
 }
 
 func NewTable(smallBlind, bigBlind int) *Table {
@@ -102,6 +104,7 @@ func (t *Table) PostBlinds() {
 
 	t.Pot += sbAmount + bbAmount
 	t.CurrentBet = t.BigBlind
+	t.LastRaise = t.BigBlind
 }
 
 func (t *Table) DealFlop() {
@@ -127,6 +130,8 @@ func (t *Table) DealRiver() {
 
 func (t *Table) ResetBetsForStreet() {
 	t.CurrentBet = 0
+	t.LastRaise = t.BigBlind
+	t.RaisesThisStreet = 0
 	for _, p := range t.Players {
 		p.Bet = 0
 	}
@@ -159,20 +164,34 @@ func (t *Table) ProcessAction(player *Player, action Action, amount int) bool {
 		return true
 
 	case Raise:
-		if amount < t.CurrentBet*2 && player.Chips > amount {
-			return false
+		minRaise := t.CurrentBet + t.LastRaise
+		if minRaise < t.BigBlind*2 {
+			minRaise = t.BigBlind * 2
+		}
+		if amount < minRaise && player.Chips+player.Bet > amount {
+			amount = minRaise
 		}
 		raiseAmount := amount - player.Bet
+		if raiseAmount <= 0 {
+			return false
+		}
+		prevBet := t.CurrentBet
 		bet := player.PlaceBet(raiseAmount)
 		t.Pot += bet
+		if player.Bet > prevBet {
+			t.LastRaise = player.Bet - prevBet
+		}
 		t.CurrentBet = player.Bet
+		t.RaisesThisStreet++
 		return true
 
 	case AllInAction:
 		bet := player.PlaceBet(player.Chips)
 		t.Pot += bet
 		if player.Bet > t.CurrentBet {
+			t.LastRaise = player.Bet - t.CurrentBet
 			t.CurrentBet = player.Bet
+			t.RaisesThisStreet++
 		}
 		return true
 	}
