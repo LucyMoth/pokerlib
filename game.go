@@ -105,8 +105,12 @@ func SimulateHeadsUp(hand1, hand2 [2]Card, community []Card, iterations int) (Si
 			fullCommunity = append(fullCommunity, deck.Deal())
 		}
 
-		cards1 := append(hand1[:], fullCommunity...)
-		cards2 := append(hand2[:], fullCommunity...)
+		cards1 := make([]Card, 0, 7)
+		cards1 = append(cards1, hand1[:]...)
+		cards1 = append(cards1, fullCommunity...)
+		cards2 := make([]Card, 0, 7)
+		cards2 = append(cards2, hand2[:]...)
+		cards2 = append(cards2, fullCommunity...)
 
 		eval1 := EvaluateHand(cards1)
 		eval2 := EvaluateHand(cards2)
@@ -157,13 +161,17 @@ func SimulateHand(hand [2]Card, community []Card, opponents int, iterations int)
 			fullCommunity = append(fullCommunity, deck.Deal())
 		}
 
-		heroCards := append(hand[:], fullCommunity...)
+		heroCards := make([]Card, 0, 7)
+		heroCards = append(heroCards, hand[:]...)
+		heroCards = append(heroCards, fullCommunity...)
 		heroEval := EvaluateHand(heroCards)
 
 		won := true
 		tied := false
 		for _, oppHand := range oppHands {
-			oppCards := append(oppHand[:], fullCommunity...)
+			oppCards := make([]Card, 0, 7)
+			oppCards = append(oppCards, oppHand[:]...)
+			oppCards = append(oppCards, fullCommunity...)
 			oppEval := EvaluateHand(oppCards)
 			cmp := heroEval.Compare(oppEval)
 			if cmp < 0 {

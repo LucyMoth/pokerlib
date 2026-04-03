@@ -210,7 +210,9 @@ func (s *GTOStrategy) decidePreflop(ctx GameContext) Decision {
 }
 
 func (s *GTOStrategy) decidePostflop(ctx GameContext) Decision {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
 
@@ -353,7 +355,9 @@ func (s *FishStrategy) decidePreflop(ctx GameContext) Decision {
 }
 
 func (s *FishStrategy) decidePostflop(ctx GameContext) Decision {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
 
@@ -402,7 +406,9 @@ func (s *FishStrategy) decidePostflop(ctx GameContext) Decision {
 }
 
 func (s *FishStrategy) hasDrawingHand(ctx GameContext) bool {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 
 	suitCounts := make(map[Suit]int)
 	for _, c := range allCards {
@@ -520,7 +526,9 @@ func (s *TAGStrategy) decidePreflop(ctx GameContext) Decision {
 }
 
 func (s *TAGStrategy) decidePostflop(ctx GameContext) Decision {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
 
@@ -606,7 +614,9 @@ func (s *LAGStrategy) decidePreflop(ctx GameContext) Decision {
 }
 
 func (s *LAGStrategy) decidePostflop(ctx GameContext) Decision {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
 
@@ -681,7 +691,9 @@ func (s *NitStrategy) decidePreflop(ctx GameContext) Decision {
 }
 
 func (s *NitStrategy) decidePostflop(ctx GameContext) Decision {
-	allCards := append(ctx.Hand[:], ctx.Community...)
+	allCards := make([]Card, 0, 2+len(ctx.Community))
+	allCards = append(allCards, ctx.Hand[:]...)
+	allCards = append(allCards, ctx.Community...)
 	result := EvaluateHand(allCards)
 	toCall := ctx.ToCall()
 
