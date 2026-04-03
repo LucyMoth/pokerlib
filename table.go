@@ -15,17 +15,17 @@ func (s Street) String() string {
 }
 
 type Table struct {
-	Players       []*Player
-	Community     []Card
-	Pot           int
-	Deck          *Deck
-	Street        Street
-	DealerPos     int
-	CurrentBet    int
-	LastRaise     int
-	SmallBlind    int
-	BigBlind      int
-	ActivePlayers int
+	Players          []*Player
+	Community        []Card
+	Pot              int
+	Deck             *Deck
+	Street           Street
+	DealerPos        int
+	CurrentBet       int
+	LastRaise        int
+	SmallBlind       int
+	BigBlind         int
+	ActivePlayers    int
 	RaisesThisStreet int
 }
 
