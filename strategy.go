@@ -77,53 +77,124 @@ func ClassifyPreflopHand(hand [2]Card) PreflopHandStrength {
 	}
 	suited := hand[0].Suit == hand[1].Suit
 	pair := high == low
+	gap := int(high) - int(low)
+	connector := gap == 1 || (high == Ace && low == Two)
 
+	// Pairs
 	if pair {
 		if high >= Queen {
 			return PremiumHand
 		}
-		if high >= Nine {
+		if high >= Ten {
 			return StrongHand
 		}
 		if high >= Six {
 			return PlayableHand
 		}
-		return MarginalHand
+		if high >= Two {
+			return MarginalHand
+		}
 	}
 
+	// Ace-high hands
 	if high == Ace {
-		if low >= King {
-			return PremiumHand
-		}
-		if low >= Ten || suited {
+		if low == King {
+			if suited {
+				return PremiumHand
+			}
 			return StrongHand
 		}
-		return PlayableHand
-	}
-
-	if high == King {
 		if low >= Queen {
 			if suited {
 				return StrongHand
 			}
 			return PlayableHand
 		}
-		if low >= Ten && suited {
+		if low >= Ten {
+			if suited {
+				return StrongHand
+			}
 			return PlayableHand
+		}
+		if suited {
+			if low >= Six {
+				return PlayableHand
+			}
+			return MarginalHand
 		}
 		return MarginalHand
 	}
 
-	gap := int(high) - int(low)
-	if gap <= 2 && high >= Ten && suited {
-		return PlayableHand
-	}
-	if gap == 1 && high >= Nine && suited {
-		return PlayableHand
+	// King-high hands
+	if high == King {
+		if low == Queen {
+			if suited {
+				return StrongHand
+			}
+			return PlayableHand
+		}
+		if low == Jack {
+			if suited {
+				return StrongHand
+			}
+			return PlayableHand
+		}
+		if low == Ten {
+			if suited {
+				return PlayableHand
+			}
+			return MarginalHand
+		}
+		if suited && low >= Nine {
+			return MarginalHand
+		}
+		return WeakHand
 	}
 
-	if suited && high >= Queen && low >= Ten {
-		return PlayableHand
+	// Queen-high hands
+	if high == Queen {
+		if low == Jack {
+			if suited {
+				return StrongHand
+			}
+			return PlayableHand
+		}
+		if low == Ten {
+			if suited {
+				return PlayableHand
+			}
+			return MarginalHand
+		}
+		if low == Nine && suited {
+			return MarginalHand
+		}
+		return WeakHand
+	}
+
+	// Suited connectors and one-gappers
+	if suited {
+		if connector && high >= Eight {
+			return PlayableHand
+		}
+		if connector && high >= Five {
+			return MarginalHand
+		}
+		if gap == 2 && high >= Nine {
+			return MarginalHand
+		}
+		if high == Jack && low >= Nine {
+			return MarginalHand
+		}
+	}
+
+	// Offsuit connectors
+	if !suited {
+		if connector && high >= Ten {
+			return MarginalHand
+		}
+		if high == Jack && low == Ten {
+			return MarginalHand
+		}
 	}
 
 	return WeakHand
