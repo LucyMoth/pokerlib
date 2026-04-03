@@ -228,52 +228,99 @@ func (s *GTOStrategy) decidePreflop(ctx GameContext) Decision {
 	strength := ClassifyPreflopHand(ctx.Hand)
 	toCall := ctx.ToCall()
 	isHeadsUp := ctx.PlayersInHand <= 2
+	openSize := ctx.BigBlind*2 + ctx.BigBlind/2
 
+	// Unopened pot (no raise yet)
 	if toCall == 0 {
 		switch strength {
 		case PremiumHand:
-			return Decision{Action: Raise, Amount: ctx.BigBlind * 3}
+			// Mix in some limps for trapping
+			if s.rng.Float64() < 0.1 {
+				return Decision{Action: Check}
+			}
+			return Decision{Action: Raise, Amount: openSize}
 		case StrongHand:
-			return Decision{Action: Raise, Amount: ctx.BigBlind * 3}
+			return Decision{Action: Raise, Amount: openSize}
 		case PlayableHand:
-			if ctx.Position >= MiddlePosition || isHeadsUp {
-				return Decision{Action: Raise, Amount: ctx.BigBlind * 3}
+			switch ctx.Position {
+			case EarlyPosition:
+				if s.rng.Float64() < 0.3 {
+					return Decision{Action: Raise, Amount: openSize}
+				}
+				return Decision{Action: Check}
+			case MiddlePosition:
+				if s.rng.Float64() < 0.65 {
+					return Decision{Action: Raise, Amount: openSize}
+				}
+				return Decision{Action: Check}
+			default:
+				return Decision{Action: Raise, Amount: openSize}
 			}
-			if s.rng.Float64() < 0.4 {
-				return Decision{Action: Raise, Amount: ctx.BigBlind * 3}
-			}
-			return Decision{Action: Check}
 		case MarginalHand:
-			if ctx.Position == LatePosition || isHeadsUp {
-				if s.rng.Float64() < 0.6 {
-					return Decision{Action: Raise, Amount: ctx.BigBlind*2 + ctx.BigBlind/2}
+			switch ctx.Position {
+			case LatePosition:
+				if s.rng.Float64() < 0.55 {
+					return Decision{Action: Raise, Amount: openSize}
+				}
+			case Blinds:
+				if isHeadsUp && s.rng.Float64() < 0.4 {
+					return Decision{Action: Raise, Amount: openSize}
 				}
 			}
 			return Decision{Action: Check}
 		default:
+			// Steal from button/CO
+			if ctx.Position == LatePosition && isHeadsUp && s.rng.Float64() < 0.25 {
+				return Decision{Action: Raise, Amount: openSize}
+			}
 			return Decision{Action: Check}
 		}
 	}
 
+	// Facing a raise
+	threeBetSize := toCall*3 + toCall/2
+
 	switch strength {
 	case PremiumHand:
 		if ctx.RaisesThisRound < 3 {
-			return Decision{Action: Raise, Amount: toCall * 3}
+			return Decision{Action: Raise, Amount: threeBetSize}
 		}
 		return Decision{Action: Call}
 	case StrongHand:
-		if ctx.RaisesThisRound == 0 {
-			if s.rng.Float64() < 0.4 {
-				return Decision{Action: Raise, Amount: toCall * 3}
-			}
+		// 3-bet some strong hands
+		if ctx.RaisesThisRound <= 1 && s.rng.Float64() < 0.35 {
+			return Decision{Action: Raise, Amount: threeBetSize}
 		}
-		if ctx.PotOdds() < 0.3 {
+		if ctx.PotOdds() < 0.30 {
+			return Decision{Action: Call}
+		}
+		// Tighten up in early position
+		if ctx.Position == EarlyPosition && ctx.RaisesThisRound >= 2 {
+			return Decision{Action: Fold}
+		}
+		return Decision{Action: Call}
+	case PlayableHand:
+		if ctx.RaisesThisRound >= 2 {
+			return Decision{Action: Fold}
+		}
+		// Call single raises in position
+		if ctx.Position >= MiddlePosition && ctx.PotOdds() < 0.22 {
+			return Decision{Action: Call}
+		}
+		// Occasionally 3-bet light from late position
+		if ctx.Position == LatePosition && s.rng.Float64() < 0.12 {
+			return Decision{Action: Raise, Amount: threeBetSize}
+		}
+		if ctx.PotOdds() < 0.18 {
 			return Decision{Action: Call}
 		}
 		return Decision{Action: Fold}
-	case PlayableHand:
-		if ctx.RaisesThisRound == 0 && ctx.PotOdds() < 0.2 {
-			return Decision{Action: Call}
+	case MarginalHand:
+		// Defend BB with pot odds
+		if ctx.Position == Blinds && ctx.PotOdds() < 0.15 {
+			if s.rng.Float64() < 0.4 {
+				return Decision{Action: Call}
+			}
 		}
 		return Decision{Action: Fold}
 	default:
