@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/LucyMoth/pokerlib"
+	"github.com/LucyMoth/pokerlib/strategies"
 )
 
 func (c *CLI) cmdHelp(args []string) {
@@ -835,15 +836,15 @@ func (c *CLI) cmdStatus(args []string) {
 func getStrategy(name string) pokerlib.Strategy {
 	switch strings.ToLower(name) {
 	case "gto":
-		return pokerlib.NewGTOStrategy()
+		return strategies.NewGTOStrategy()
 	case "tag":
-		return pokerlib.NewTAGStrategy()
+		return strategies.NewTAGStrategy()
 	case "lag":
-		return pokerlib.NewLAGStrategy()
+		return strategies.NewLAGStrategy()
 	case "fish":
-		return pokerlib.NewFishStrategy()
+		return strategies.NewFishStrategy()
 	case "nit":
-		return pokerlib.NewNitStrategy()
+		return strategies.NewNitStrategy()
 	default:
 		return nil
 	}

@@ -36,6 +36,8 @@ fmt.Printf("AKs: %.1f%% vs JJ: %.1f%%\n", r1.Equity()*100, r2.Equity()*100)
 ### Running a game with AI players
 
 ```go
+import "github.com/LucyMoth/pokerlib/strategies"
+
 config := pokerlib.DefaultConfig() // 25/50 blinds, 1000 chips
 game := pokerlib.NewGame(config)
 
@@ -44,7 +46,7 @@ game.AddPlayer("Bob")
 
 // assign strategies
 for _, p := range game.Table.Players {
-    p.SetStrategy(pokerlib.NewGTOStrategy())
+    p.SetStrategy(strategies.NewGTOStrategy())
 }
 
 game.PlayHand()
